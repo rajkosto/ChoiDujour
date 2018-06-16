@@ -13,7 +13,7 @@ import win32con
 import win32api
 
 programName = 'ChoiDujour'
-programVersion = '1.0.1'
+programVersion = '1.0.2'
 
 hactool = 'hactool.exe'
 kip1decomp = 'kip1decomp.exe'
@@ -353,8 +353,13 @@ else:
     call_hactool(theargs)
     upd_dir = targetFolder
 
+numMeta = 0
+numData = 0
+
 upd_dir_abs = os.path.abspath(upd_dir)
 for currDir, subdirs, files in os.walk(upd_dir_abs):
+    subdirs.sort()
+    files.sort()
     for filename in files:
         currFile = os.path.join(currDir, filename)
         fileIsNca = False
@@ -377,16 +382,12 @@ for currDir, subdirs, files in os.walk(upd_dir_abs):
 
         ncas[ncaId] = NcaInfo(currFile, '', titleId, contentType)
         #print(ncaId + ' = NcaInfo(' + ncas[ncaId].path + ' , ' + ncas[ncaId].titleId + ' , ' + ncas[ncaId].contentType + ')')
-
-numMeta = 0
-numData = 0
-
-for ncaId in ncas:
-    if ncas[ncaId].contentType == "Meta":
-        numMeta = numMeta + 1
-    else:
-        numData = numData + 1
-        titles[ncas[ncaId].titleId] = ncaId
+        if contentType == "Meta":
+            numMeta = numMeta + 1
+        else:
+            numData = numData + 1
+            if titleId not in titles:
+                titles[titleId] = ncaId
 
 print('Found ' + str(numMeta) + ' meta and ' + str(numData) + ' data NCAs in ' + upd_dir_abs)
 sysVerNcaId = titles.get('0100000000000809')
