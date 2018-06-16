@@ -13,7 +13,7 @@ import win32con
 import win32api
 
 programName = 'ChoiDujour'
-programVersion = '1.0.0'
+programVersion = '1.0.1'
 
 hactool = 'hactool.exe'
 kip1decomp = 'kip1decomp.exe'
@@ -608,6 +608,7 @@ try:
     for dirPath in sorted(dirsToMake):
         #print('Making dir ' + dirPath)
         os.makedirs(dirPath)
+        set_file_attributes(dirPath, jayson['dirs'][dirPath])
 
     for ncaId in jayson['ncas']:
         srcInfo = ncas[ncaId]
