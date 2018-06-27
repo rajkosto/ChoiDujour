@@ -98,7 +98,7 @@ try:
         if len(inputFiles) == 0:
             sys.exit('Please specify input firmware file/folder!')
         else:
-            sys.exit('Only one input firmware file/folder argument is allowed, you gave ' + len(inputFiles))
+            sys.exit('Only one input firmware file/folder argument is allowed, you gave ' + str(len(inputFiles)))
 except SystemExit, e:
     print_usage()
     raise
