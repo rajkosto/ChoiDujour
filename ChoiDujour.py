@@ -9,27 +9,33 @@ import subprocess
 import hashlib
 import tempfile
 import shutil
-import win32con
-import win32api
+import platform
+
+if platform.system() == 'Windows':
+    import win32con
+    import win32api
 
 programName = 'ChoiDujour'
 programVersion = '1.0.2'
 
-hactool = 'hactool.exe'
-kip1decomp = 'kip1decomp.exe'
-xdelta3 = 'xdelta3.exe'
-seven7a = '7za.exe'
+extension = '.exe' if platform.system() == 'Windows' else ''
 
-toolsdir = ''
+toolspath = os.environ['PATH'].split(os.pathsep)
 if getattr( sys, 'frozen', False ):
-    toolsdir = sys._MEIPASS
+    toolspath+= [sys._MEIPASS]
 else:
-    toolsdir = os.path.dirname(os.path.realpath(__file__))
+    toolspath+= [os.path.dirname(os.path.realpath(__file__))]
 
-hactool = os.path.join(toolsdir, hactool)
-kip1decomp = os.path.join(toolsdir, kip1decomp)
-xdelta3 = os.path.join(toolsdir, xdelta3)
-seven7a = os.path.join(toolsdir, seven7a)
+def find_tool(name):
+    for dir in toolspath:
+        if os.path.exists(os.path.join(dir, name + extension)):
+            return os.path.join(dir, name + extension)
+    sys.exit('Required tool ' + name + ' is missing!')
+
+hactool = find_tool('hactool')
+kip1decomp = find_tool('kip1decomp')
+xdelta3 = find_tool('xdelta3')
+seven7a = find_tool('7za')
 
 for toolPath in [hactool,kip1decomp,xdelta3,seven7a]:
     if not os.path.exists(toolPath):
@@ -235,6 +241,8 @@ def find_line_starting(strarray, prefix):
     return None
 
 def set_file_attributes(filePath, attrStr):
+    if platform.system() != 'Windows':
+        return
     attrStr = attrStr.upper()
     winAttrs = 0x0
     if (len(attrStr) == 0) or (attrStr == 'N'):
