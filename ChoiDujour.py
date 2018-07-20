@@ -100,11 +100,12 @@ try:
             if inFileType not in validTypes:
                 sys.exit('Invalid input file type ' + inFileType + ' (supported: ' + ",".join(validTypes) + ')')
         elif currParam.startswith('--fspatches='):
-            selectedPatchesStr = currParam[12:].lower()
+            selectedPatchesStr = currParam[12:].strip().lower()
             wanted_patches = []
-            for patchName in selectedPatchesStr.split(','):
-                wanted_patches += [patchName.strip()]
-            wanted_patches.sort()
+            if len(selectedPatchesStr) > 0:
+                for patchName in selectedPatchesStr.split(','):
+                    wanted_patches += [patchName.strip()]
+                wanted_patches.sort()
         else:
             sys.exit('Unknown parameter specified: ' + currParam)
 
@@ -588,6 +589,7 @@ try:
     if safePkg.ncaId is None:
         sys.exit('Missing SAFE Firmware Package! (TitleID: ' + safePkg.titleId + ')')
 
+    firmwareIsExFAT = normalPkg.titleId in exfpkg2titles
     print('Using TitleID ' + normalPkg.titleId + ' for Normal firmware package')
     pkg2path = normalPkg.load(tempDirName, versionPlatform.lower())
     print('Using TitleID ' + safePkg.titleId + ' for SAFE firmware package')
@@ -693,6 +695,9 @@ try:
     os.chdir(prevDir)
 
     outDirName = versionPlatform + '-' + versionStr
+    if firmwareIsExFAT:
+        outDirName += '_exfat'
+
     shutil.rmtree(outDirName, ignore_errors=True)
     os.makedirs(outDirName)
     os.chdir(outDirName)
@@ -702,15 +707,28 @@ try:
     os.mkdir(microsdDir)
     shutil.move(os.path.join(tempDirName, fsPatchTarget), os.path.join(microsdDir, fsPatchTarget))
     with open(os.path.join(microsdDir, 'hekate_ipl.ini'),'w') as hekateFile:
-        hekateFile.write("[stock]\n")
-        fsSectionName = 'FS_' + versionStr.replace(".","")        
+        stockSectionName = 'stock'
+        fsSectionName = 'FS_' + versionStr.replace(".","")
+        if firmwareIsExFAT:
+            fsSectionName += '-exfat'
+        if len(finalFilenameArr) > 1:
+            fsSectionName += '_' + '_'.join(finalFilenameArr[1:])
+            if 'nogc' in finalFilenameArr[1:]:
+                stockSectionName += '-POTENTIALLY_UNSAFE_FOR_GC_READER'
+
+        hekateFile.write("[" + stockSectionName + "]\n")
         hekateFile.write("[" + fsSectionName + "]\n")
         hekateFile.write("kip1=" + fsPatchTarget + "\n")
         hekateFile.write("\n")
 
     jayson = {}
     try:
-        jayson = json.loads(fetch_url_bytes('https://switchtools.sshnuke.net/firmware/'+versionHash+'.json'), object_hook=deunicodify_hook)
+        patchesJsonUrl = 'https://switchtools.sshnuke.net/firmware/'+versionHash
+        if firmwareIsExFAT:
+            patchesJsonUrl += '_exfat'
+        patchesJsonUrl += '.json'
+
+        jayson = json.loads(fetch_url_bytes(patchesJsonUrl), object_hook=deunicodify_hook)
     except urllib2.HTTPError, e:
         if e.code != 404:
             raise
