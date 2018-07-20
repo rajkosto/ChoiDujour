@@ -2,6 +2,7 @@ import os
 import sys
 import struct
 import json
+import binascii
 import gzip
 import urllib2
 from StringIO import StringIO
@@ -34,10 +35,9 @@ def find_tool(name):
 
 hactool = find_tool('hactool')
 kip1decomp = find_tool('kip1decomp')
-xdelta3 = find_tool('xdelta3')
 seven7a = find_tool('7za')
 
-for toolPath in [hactool,kip1decomp,xdelta3,seven7a]:
+for toolPath in [hactool,kip1decomp,seven7a]:
     if not os.path.exists(toolPath):
         sys.exit('Required tool ' + os.path.basename(toolPath) + ' is missing!')
 
@@ -51,7 +51,7 @@ def print_welcome():
 def print_usage():
     print_welcome()
     print('Usage:')
-    print('ChoiDujour [--help] [--dev] [--keyset=path/to/keys.txt] [--noexfat] [--nossl]   [--intype=xci/nca/romfs/hfs0] firmwareSrc')
+    print('ChoiDujour [--help] [--dev] [--keyset=path/to/keys.txt] [--noexfat] [--nossl]   [--fspatches=nocmac,nogc] [--intype=xci/nca/romfs/hfs0] firmwareSrc')
     print('')
     print('Parameters: ')
     print('--help\t\tdisplay this usage message')
@@ -59,6 +59,7 @@ def print_usage():
     print('--keyset=path\toverride default hactool keys txt file path')
     print('--noexfat\talways generate normal BCPKG2/FS.kip1 (no exfat support)')
     print('--nossl\t\tuse http instead of https protocol for web requests')
+    print('--fspatches\tcomma separated list of patches to apply to generated FS.kip1')
     print('--intype=type\tfirmware package file type (Ignored if firmwareSrc is a folder)')
     print('firmwareSrc\tpath to source firmware package file or folder')
     print('')
@@ -67,6 +68,7 @@ hackeyspath = ''
 hacisDev = False
 try_exfat = True
 http_only = False
+wanted_patches = ['nocmac', 'nogc']
 
 myParams = []
 inputFiles = []
@@ -97,6 +99,12 @@ try:
             validTypes = ['nca', 'xci', 'romfs', 'hfs0']
             if inFileType not in validTypes:
                 sys.exit('Invalid input file type ' + inFileType + ' (supported: ' + ",".join(validTypes) + ')')
+        elif currParam.startswith('--fspatches='):
+            selectedPatchesStr = currParam[12:].lower()
+            wanted_patches = []
+            for patchName in selectedPatchesStr.split(','):
+                wanted_patches += [patchName.strip()]
+            wanted_patches.sort()
         else:
             sys.exit('Unknown parameter specified: ' + currParam)
 
@@ -369,6 +377,11 @@ def kip1_blz_decompress(compressed):
     return ''.join(map(chr, decompressed))
 #end of code copied from https://github.com/reswitched/loaders/blob/master/nxo64.py
 
+class InMemoryFile(object):
+    contents = ""
+    def write(self, moredata):
+        self.contents += moredata
+
 class KipSegment(object):
     dstOff = 0
     decompSz = 0
@@ -437,6 +450,11 @@ class KipHeader(object):
             seg.compSz = len(decompData)
         
         self.flags = self.flags & 0xF8 #nothing is compressed anymore
+
+    def getContents(self):
+        dstFile = InMemoryFile()
+        self.save(dstFile)
+        return dstFile.contents
 
 
 print_welcome()
@@ -610,36 +628,64 @@ try:
     call_hactool(["-x", "--intype=package2", "--outdir="+tempDirName, pkg2path])
     call_hactool(["-x", "--intype=ini1", "--outdir="+tempDirName, os.path.join(tempDirName,"INI1.bin")])
     os.chdir(tempDirName)
-    compFSkipName = "FS.kip1"
-    decompFSkipName = "FS.decomp.kip1"
-    print('Decompressing ' + compFSkipName + ' from TitleID ' + normalPkg.titleId + '...')
+    compFSkipName = "FS.kip1"    
+    compFSKipHash = get_sha256_file_digest(compFSkipName)
+    compFSKipHash = compFSKipHash[:len(compFSKipHash)/2].lower()
+
+    print('Decompressing ' + compFSkipName + ' from TitleID ' + normalPkg.titleId + ' hash ' + compFSKipHash)
     kipdata = KipHeader()
     with open(compFSkipName, 'rb') as srcKipFile:        
-        kipdata.load(srcKipFile)
-    
+        kipdata.load(srcKipFile)    
     kipdata.decompress()
-    with open(decompFSkipName, 'wb') as dstKipFile:
-        kipdata.save(dstKipFile)
+    kipdata = kipdata.getContents()
     
-    decompFSkipHash = get_sha256_file_digest(decompFSkipName)
-    print(decompFSkipName + ' has size ' + str(os.stat(decompFSkipName).st_size) + ' sha256: ' + decompFSkipHash)
+    fsPatches = {}
+    fsPatchesJsonBytes = fetch_url_bytes('https://switchtools.sshnuke.net/firmware/fs_patches.json')
+    fsPatches = json.loads(fsPatchesJsonBytes, object_hook=deunicodify_hook)
 
-    fsVersions = {}
-    fsVersionsJsonBytes = fetch_url_bytes('https://switchtools.sshnuke.net/firmware/fs_nocmac_patches.json')
-    fsVersions = json.loads(fsVersionsJsonBytes, object_hook=deunicodify_hook)
+    fsVersions = fsPatches['versions']
+    if compFSKipHash not in fsVersions:
+        sys.exit('Unknown ' + compFSkipName + ' hash: ' + compFSKipHash + ' This firmware is not supported(yet?)')
 
-    if decompFSkipHash not in fsVersions:
-        sys.exit('Unknown ' + decompFSkipName + ' sha256: ' + decompFSkipHash + ' This firmware is not supported(yet?)')
+    fsVersionInfo = fsVersions[compFSKipHash]
+    fsVersionName = fsVersionInfo['name']
+    fsVersionPatches = fsVersionInfo['patches']
 
-    fsPatchInfo = fsVersions[decompFSkipHash]
-    fsPatchUrl = fsPatchInfo['url']
-    fsPatchName = fsPatchUrl.split("/")[-1]
-    with open(fsPatchName,'wb') as patchFile:
-        patchFile.write(fetch_url_bytes(fsPatchUrl, gzipped=False))
+    finalFilenameArr = [os.path.splitext(fsVersionName)[0]]
+    for wntpatch in wanted_patches:
+        if wntpatch not in fsVersionPatches:
+            sys.exit("Requested patch '" + wntpatch + "' currently not available for '" + fsVersionName + "', cannot continue!")
 
-    fsPatchTarget = fsPatchInfo['name']
-    print('Patching ' + decompFSkipName + ' with ' + fsPatchName + '...')
-    realtime_run([xdelta3, "-d", "-f", "-s", decompFSkipName, fsPatchName, fsPatchTarget])
+        fsPatchName = fsVersionPatches[wntpatch]
+        if not fsPatchName:
+            print("Patch '" + wntpatch + "' does not need to be applied on '" + fsVersionName + "', skipping")
+            continue
+
+        print("Applying patch '" + wntpatch + "' on '" + fsVersionName + "' using definition '" + fsPatchName + "'...")
+        fsPatchData = fsPatches['patches'][fsPatchName]
+        for offsetStr, dataArr in fsPatchData.items():
+            offsetNum = int(offsetStr, 0)
+            neededBytes = binascii.unhexlify(dataArr[0].replace(' ', ''))
+            targetBytes = binascii.unhexlify(dataArr[1].replace(' ', ''))
+
+            sourceBytes = bytes(kipdata[offsetNum:offsetNum+len(neededBytes)])
+            if sourceBytes != neededBytes:
+                sys.exit("Data at offset " + hex(offsetNum) + ' ( ' + binascii.hexlify(sourceBytes) + ' ) does not match expected ( ' + binascii.hexlify(neededBytes) + ' )!')
+
+            kipdata = kipdata[:offsetNum] + targetBytes + kipdata[offsetNum+len(targetBytes):]
+            sourceBytes = bytes(kipdata[offsetNum:offsetNum+len(targetBytes)])
+            if sourceBytes != targetBytes:
+                sys.exit("Data at offset " + hex(offsetNum) + ' ( ' + binascii.hexlify(sourceBytes) + ' ) does not match expected ( ' + binascii.hexlify(targetBytes) + ' )!')
+            
+            print('Written to ' + hex(offsetNum) + ': ' + binascii.hexlify(sourceBytes).upper())
+
+        finalFilenameArr += [wntpatch]
+
+    
+    fsPatchTarget = '_'.join(finalFilenameArr) + os.path.splitext(fsVersionName)[1]
+    with open(fsPatchTarget, 'wb') as dstPatchedFile:
+        dstPatchedFile.write(kipdata)
+
     fsPatchedSize = os.stat(fsPatchTarget).st_size
     print('Compressing ' + fsPatchTarget + '...')
     realtime_run([kip1decomp, "c", fsPatchTarget, fsPatchTarget])
