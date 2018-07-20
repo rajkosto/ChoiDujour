@@ -321,7 +321,123 @@ class FirmwarePackage(object):
             self.pkg1Bytes += "\0" * (0x40000 - pkg1Len)
 
         return pkg2Filename
-             
+
+#copied verbatim from https://github.com/reswitched/loaders/blob/master/nxo64.py
+def kip1_blz_decompress(compressed):
+    compressed_size, init_index, uncompressed_addl_size = struct.unpack('<III', compressed[-0xC:])
+    decompressed = compressed[:] + '\x00' * uncompressed_addl_size
+    decompressed_size = len(decompressed)
+    if len(compressed) != compressed_size:
+        assert len(compressed) > compressed_size
+        compressed = compressed[len(compressed) - compressed_size:]
+    if not (compressed_size + uncompressed_addl_size):
+        return ''
+    compressed = map(ord, compressed)
+    decompressed = map(ord, decompressed)
+    index = compressed_size - init_index
+    outindex = decompressed_size
+    while outindex > 0:
+        index -= 1
+        control = compressed[index]
+        for i in xrange(8):
+            if control & 0x80:
+                if index < 2:
+                    raise ValueError('Compression out of bounds!')
+                index -= 2
+                segmentoffset = compressed[index] | (compressed[index+1] << 8)
+                segmentsize = ((segmentoffset >> 12) & 0xF) + 3
+                segmentoffset &= 0x0FFF
+                segmentoffset += 2
+                if outindex < segmentsize:
+                    raise ValueError('Compression out of bounds!')
+                for j in xrange(segmentsize):
+                    if outindex + segmentoffset >= decompressed_size:
+                        raise ValueError('Compression out of bounds!')
+                    data = decompressed[outindex+segmentoffset]
+                    outindex -= 1
+                    decompressed[outindex] = data
+            else:
+                if outindex < 1:
+                    raise ValueError('Compression out of bounds!')
+                outindex -= 1
+                index -= 1
+                decompressed[outindex] = compressed[index]
+            control <<= 1
+            control &= 0xFF
+            if not outindex:
+                break
+    return ''.join(map(chr, decompressed))
+#end of code copied from https://github.com/reswitched/loaders/blob/master/nxo64.py
+
+class KipSegment(object):
+    dstOff = 0
+    decompSz = 0
+    compSz = 0
+    attribute = 0
+    datas = ""
+
+class KipHeader(object):
+    name = ""
+    titleId = 0
+    processCategory = 0
+    mainThreadPriority = 0
+    defaultCpuId = 0
+    unk = 0
+    flags = 0
+    segments = []
+    capabilities = []
+
+    def load(self, srcFile):
+        magicBytes = srcFile.read(4)
+        magic = struct.unpack('>I', magicBytes)[0]
+        if magic != 0x4B495031:
+            raise ValueError('KIP1 invalid magic')
+        
+        headerBytes = srcFile.read(32-4)
+        (self.name, self.titleId, self.processCategory, self.mainThreadPriority, self.defaultCpuId, self.unk, self.flags) = struct.unpack('<12sQIBBBB', headerBytes)
+
+        self.segments = []
+        for i in xrange(6):
+            headerBytes = srcFile.read(16)
+            newSegment = KipSegment()
+            (newSegment.dstOff, newSegment.decompSz, newSegment.compSz, newSegment.attribute) = struct.unpack('<IIII', headerBytes)
+            self.segments += [newSegment]
+
+        headerBytes = srcFile.read(128)
+        caps = struct.unpack('<32I', headerBytes)
+        self.capabilities = []
+        for cap in caps:
+            self.capabilities += [cap]
+
+        for i in xrange(6):
+            self.segments[i].datas = srcFile.read(self.segments[i].compSz)
+
+    def save(self, dstFile):
+        dstFile.write(struct.pack('>I', 0x4B495031))
+        dstFile.write(struct.pack('<12sQIBBBB', self.name, self.titleId, self.processCategory, self.mainThreadPriority, self.defaultCpuId, self.unk, self.flags))
+        for seg in self.segments:
+            dstFile.write(struct.pack('<IIII', seg.dstOff, seg.decompSz, seg.compSz, seg.attribute))
+        for cap in self.capabilities:
+            dstFile.write(struct.pack('<I', cap))
+
+        for seg in self.segments:
+            if seg.compSz != 0:
+                dstFile.write(seg.datas)
+
+    def decompress(self):
+        for i, seg in enumerate(self.segments):
+            if i >= 3:
+                break
+
+            if (self.flags & (1 << i)) == 0:
+                continue
+
+            decompData = kip1_blz_decompress(seg.datas)
+            seg.datas = decompData
+            seg.compSz = len(decompData)
+        
+        self.flags = self.flags & 0xF8 #nothing is compressed anymore
+
 
 print_welcome()
 upd_dir = inputFiles[-1]
@@ -497,7 +613,14 @@ try:
     compFSkipName = "FS.kip1"
     decompFSkipName = "FS.decomp.kip1"
     print('Decompressing ' + compFSkipName + ' from TitleID ' + normalPkg.titleId + '...')
-    realtime_run([kip1decomp, "d", compFSkipName, decompFSkipName])
+    kipdata = KipHeader()
+    with open(compFSkipName, 'rb') as srcKipFile:        
+        kipdata.load(srcKipFile)
+    
+    kipdata.decompress()
+    with open(decompFSkipName, 'wb') as dstKipFile:
+        kipdata.save(dstKipFile)
+    
     decompFSkipHash = get_sha256_file_digest(decompFSkipName)
     print(decompFSkipName + ' has size ' + str(os.stat(decompFSkipName).st_size) + ' sha256: ' + decompFSkipHash)
 
