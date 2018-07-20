@@ -22,9 +22,9 @@ extension = '.exe' if platform.system() == 'Windows' else ''
 
 toolspath = os.environ['PATH'].split(os.pathsep)
 if getattr( sys, 'frozen', False ):
-    toolspath+= [sys._MEIPASS]
+    toolspath = [sys._MEIPASS] + toolspath
 else:
-    toolspath+= [os.path.dirname(os.path.realpath(__file__))]
+    toolspath = [os.path.dirname(os.path.realpath(__file__))] + toolspath
 
 def find_tool(name):
     for dir in toolspath:
