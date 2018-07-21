@@ -17,7 +17,7 @@ if platform.system() == 'Windows':
     import win32api
 
 programName = 'ChoiDujour'
-programVersion = '1.0.2'
+programVersion = '1.1.0'
 
 extension = '.exe' if platform.system() == 'Windows' else ''
 
@@ -115,7 +115,8 @@ try:
         else:
             sys.exit('Only one input firmware file/folder argument is allowed, you gave ' + str(len(inputFiles)))
 except SystemExit, e:
-    print_usage()
+    if e.code is not None:
+        print_usage()
     raise
 
 if len(hackeyspath) == 0:
