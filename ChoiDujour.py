@@ -222,7 +222,10 @@ def call_hactool(moreArgs):
         raise Exception(err_msg)
 
     elif len(std_err):
-        raise Exception(std_err)
+    	std_err_lines = std_err.splitlines()
+    	for line in std_err_lines:
+    		if "[WARN]:" not in line:
+    			raise Exception(std_err)
 
     return std_out
 
