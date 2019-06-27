@@ -222,7 +222,7 @@ def call_hactool(moreArgs):
         raise Exception(err_msg)
 
     elif len(std_err):
-        raise Exception(std_err)
+       
 
     return std_out
 
@@ -514,7 +514,7 @@ for currDir, subdirs, files in os.walk(upd_dir_abs):
             print('file ' + currFile + ' not a NCA, skipping')
             continue
 
-        ncaInfoLines = call_hactool(["-i", "--intype=nca", currFile]).splitlines()
+        
         ncaId = get_sha256_file_digest(currFile)
         ncaId = ncaId[:len(ncaId)/2]
 
